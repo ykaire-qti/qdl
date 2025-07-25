@@ -21,8 +21,8 @@ struct program {
 	bool is_erase;
 
 	unsigned int sparse_chunk_type;
-	unsigned int sparse_chunk_data;
-
+	unsigned int sparse_chunk_data_file_offset;
+	unsigned int sparse_chunk_size; // in bytes
 	struct program *next;
 };
 

@@ -23,6 +23,7 @@
 
 int sparse_header_parse(int fd, sparse_header_t *sparse_header)
 {
+	// read from the beginning of the file
 	lseek(fd, 0, SEEK_SET);
 
 	if (read(fd, sparse_header, sizeof(sparse_header_t)) != sizeof(sparse_header_t)) {
@@ -59,17 +60,22 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 
 	*chunk_size = 0;
 	*value = 0;
+	ux_info("[SPARSE] Parsing chunk header...\n");
 
 	if (read(fd, &chunk_header, sizeof(chunk_header_t)) != sizeof(chunk_header_t)) {
 		ux_err("[SPARSE] Unable to read sparse chunk header\n");
 		return -EINVAL;
 	}
 
-	if (sparse_header->chunk_hdr_sz > sizeof(chunk_header_t))
+	if (sparse_header->chunk_hdr_sz > sizeof(chunk_header_t)) {
+			// Skip the remaining bytes in a header that is longer than we expected
+		ux_info("[SPARSE] Skipping %d bytes in chunk header\n",
+			sparse_header->chunk_hdr_sz - sizeof(chunk_header_t));
 		lseek(fd, sparse_header->chunk_hdr_sz - sizeof(chunk_header_t), SEEK_CUR);
-
+	}
 	if (ntohs(chunk_header.chunk_type) == ntohs(CHUNK_TYPE_RAW)) {
 		*chunk_size = chunk_header.chunk_sz * sparse_header->blk_sz;
+		ux_info("[SPARSE] Chunk type RAW, chunk size %d\n", *chunk_size);
 
 		if (chunk_header.total_sz != (sparse_header->chunk_hdr_sz + *chunk_size)) {
 			ux_err("[SPARSE] Bogus chunk size, type Raw\n");
@@ -77,6 +83,7 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 		}
 
 		/* Save the current file offset in the 'value' variable */
+		/* The current file offset should point to the data section of the current chunk */
 		*value = lseek(fd, 0, SEEK_CUR);
 
 		/* Move the file cursor forward by the size of the chunk */
@@ -86,6 +93,7 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 
 	} else if (ntohs(chunk_header.chunk_type) == ntohs(CHUNK_TYPE_DONT_CARE)) {
 		*chunk_size = chunk_header.chunk_sz * sparse_header->blk_sz;
+		ux_info("[SPARSE] Chunk type DONT_CARE, chunk size %d\n", *chunk_size);
 
 		if (chunk_header.total_sz != sparse_header->chunk_hdr_sz) {
 			ux_err("[SPARSE] Bogus chunk size, type Don't Care\n");
@@ -96,19 +104,25 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 
 	} else if (ntohs(chunk_header.chunk_type) == ntohs(CHUNK_TYPE_FILL)) {
 		*chunk_size = chunk_header.chunk_sz * sparse_header->blk_sz;
+		ux_info("[SPARSE] Chunk type CHUNK_TYPE_FILL, chunk size %d\n", *chunk_size);
 
 		if (chunk_header.total_sz != (sparse_header->chunk_hdr_sz + sizeof(fill_value))) {
 			ux_err("[SPARSE] Bogus chunk size, type Fill\n");
 			return -EINVAL;
 		}
 
-		if (read(fd, &fill_value, sizeof(fill_value)) != sizeof(fill_value)) {
-			ux_err("[SPARSE] Unable to read fill value\n");
-			return -EINVAL;
-		}
+		// if (read(fd, &fill_value, sizeof(fill_value)) != sizeof(fill_value)) {
+		// 	ux_err("[SPARSE] Unable to read fill value\n");
+		// 	return -EINVAL;
+		// }
 
-		/* Save the current fill value in the 'value' variable */
-		*value = fill_value;
+		// /* Save the current fill value in the 'value' variable */
+		// *value = fill_value;
+
+		*value = lseek(fd, 0, SEEK_CUR);
+
+		/* Move the file cursor forward by the size of the chunk */
+		lseek(fd, *chunk_size, SEEK_CUR);
 
 		return CHUNK_TYPE_FILL;
 	}

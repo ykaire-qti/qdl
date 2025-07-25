@@ -58,7 +58,7 @@ static int load_erase_tag(xmlNode *node, bool is_nand)
 static struct program *program_load_sparse(struct program *program, int fd)
 {
 	struct program *program_sparse = NULL;
-	struct program *programes_sparse = NULL;
+	struct program *programes_sparse = NULL; // linked list of program_sparse
 	struct program *programes_sparse_last = NULL;
 	char tmp[PATH_MAX];
 
@@ -116,13 +116,19 @@ static struct program *program_load_sparse(struct program *program, int fd)
 		case CHUNK_TYPE_FILL:
 
 			program_sparse = calloc(1, sizeof(struct program));
-			memcpy(program_sparse, program, sizeof(struct program));
+			if (!program_sparse) {
+				ux_err("[SPARSE] Unable to allocate memory for program_sparse\n");
+				return NULL;
+			}
 
+			memcpy(program_sparse, program, sizeof(struct program));
+			ux_debug("[SPARSE] Chunk start sector: %s\n", (unsigned int)strtoul(program_sparse->start_sector, NULL, 0));
 			program_sparse->next = NULL;
 			program_sparse->num_sectors = chunk_size / program->sector_size;
 
 			program_sparse->sparse_chunk_type = chunk_type;
-			program_sparse->sparse_chunk_data = chunk_data;
+			program_sparse->sparse_chunk_data_file_offset = chunk_data;
+			program_sparse->sparse_chunk_size = chunk_size;
 
 			if (programes_sparse) {
 				programes_sparse_last->next = program_sparse;
@@ -162,14 +168,18 @@ static int load_program_tag(xmlNode *node, bool is_nand)
 	program->partition = attr_as_unsigned(node, "physical_partition_number", &errors);
 	program->sparse = attr_as_bool(node, "sparse", &errors);
 	program->start_sector = attr_as_string(node, "start_sector", &errors);
+	
+	ux_debug("[SPARSE] File name: %u\n", program->filename);
 
 	if (is_nand) {
+		ux_debug("program is NAND\n");
 		program->pages_per_block = attr_as_unsigned(node, "PAGES_PER_BLOCK", &errors);
 		if (xmlGetProp(node, (xmlChar *)"last_sector")) {
 			program->last_sector = attr_as_unsigned(node, "last_sector", &errors);
 		}
 	} else {
 		program->file_offset = attr_as_unsigned(node, "file_sector_offset", &errors);
+		ux_debug("[SPARSE] File offset: %u\n", program->file_offset);
 	}
 
 	if (errors) {
@@ -236,6 +246,7 @@ int program_execute(struct qdl_device *qdl, int (*apply)(struct qdl_device *qdl,
 	int ret;
 	int fd;
 
+	// programes was filled out in load_program_tag, loop from the front (will be in order read from xml)
 	for (program = programes; program; program = program->next) {
 		if (program->is_erase || !program->filename)
 			continue;
@@ -247,6 +258,7 @@ int program_execute(struct qdl_device *qdl, int (*apply)(struct qdl_device *qdl,
 				filename = tmp;
 		}
 
+		//reading the actual file (i.e. file from filename in the .xml)
 		fd = open(filename, O_RDONLY | O_BINARY);
 
 		if (fd < 0) {
@@ -285,7 +297,7 @@ int program_execute(struct qdl_device *qdl, int (*apply)(struct qdl_device *qdl,
 
 int erase_execute(struct qdl_device *qdl, int (*apply)(struct qdl_device *qdl, struct program *program))
 {
-	struct program *program;
+	struct program *program; // local
 	int ret;
 
 	for (program = programes; program; program = program->next) {
