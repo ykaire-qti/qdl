@@ -116,13 +116,13 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 		// 	return -EINVAL;
 		// }
 
-		// /* Save the current fill value in the 'value' variable */
+		/* Save the current fill value in the 'value' variable */
 		// *value = fill_value;
 
 		*value = lseek(fd, 0, SEEK_CUR);
 
 		/* Move the file cursor forward by the size of the chunk */
-		lseek(fd, *chunk_size, SEEK_CUR);
+		lseek(fd, sizeof(fill_value), SEEK_CUR);
 
 		return CHUNK_TYPE_FILL;
 	}

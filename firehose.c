@@ -391,7 +391,9 @@ static int firehose_program(struct qdl_device *qdl, struct program *program, int
 
 	ux_info("Num sectors: %d\n", num_sectors);
 
-	buf = malloc(qdl->max_payload_size);
+	// buf = malloc(qdl->max_payload_size);
+	buf = calloc(1, qdl->max_payload_size); // Allocates qdl->max_payload*1 byte, all set to 0
+
 	if (!buf)
 		err(1, "failed to allocate sector buffer");
 
@@ -404,7 +406,6 @@ static int firehose_program(struct qdl_device *qdl, struct program *program, int
 	xml_setpropf(node, "num_partition_sectors", "%d", num_sectors);
 	xml_setpropf(node, "physical_partition_number", "%d", program->partition);
 	xml_setpropf(node, "start_sector", "%s", program->start_sector);
-	xml_setpropf(node, "file_sector_offset", "%s", program->sparse_chunk_data_file_offset);
 	if (program->filename)
 		xml_setpropf(node, "filename", "%s", program->filename);
 
@@ -424,9 +425,7 @@ static int firehose_program(struct qdl_device *qdl, struct program *program, int
 		ux_err("failed to setup programming\n");
 		goto out;
 	}
-
 	t0 = time(NULL);
-
 	if (!program->sparse) {
 		lseek(fd, (off_t)program->file_offset * program->sector_size, SEEK_SET);
 	} else {
@@ -435,6 +434,8 @@ static int firehose_program(struct qdl_device *qdl, struct program *program, int
 			lseek(fd, (off_t)program->sparse_chunk_data_file_offset, SEEK_SET);
 			break;
 		case CHUNK_TYPE_FILL:
+			int n = 0;
+			ux_debug("FIREHOSE CHUNK_TYPE_FILL: num bytes to write: %d\n", program->sparse_chunk_size);
 			ux_debug("FIREHOSE CHUNK_TYPE_FILL: num bytes to write: %d\n", program->sparse_chunk_size);
 			// fill_value = (uint32_t)program->sparse_chunk_data_file_offset;
 			lseek(fd, (off_t)program->sparse_chunk_data_file_offset, SEEK_SET);
@@ -443,10 +444,34 @@ static int firehose_program(struct qdl_device *qdl, struct program *program, int
 				return -EINVAL;
 			}
 			// Loop through the number of bytes of this specific chunk
-			size_t num_bytes = (program->sparse_chunk_size < qdl->max_payload_size) ? program->sparse_chunk_size : qdl->max_payload_size;
-			for (n = 0; n < num_bytes; n += sizeof(fill_value))
-				memcpy(buf + n, &fill_value, sizeof(fill_value));
+			ux_debug("FIREHOSE CHUNK_TYPE_FILL: sparse_chunk_size: %d bytes\n", program->sparse_chunk_size );
+			ux_debug("FIREHOSE CHUNK_TYPE_FILL: max_payload_size: %d bytes\n",qdl->max_payload_size );
+
+			// size_t num_bytes = (program->sparse_chunk_size < qdl->max_payload_size) ? program->sparse_chunk_size : qdl->max_payload_size;
+			size_t num_bytes = qdl->max_payload_size;
+			ux_debug("FIREHOSE CHUNK_TYPE_FILL: will write: %d bytes\n", num_bytes );
+			if ((fill_value & 0xFF) == ((fill_value >> 8) & 0xFF) && 
+			    (fill_value & 0xFF) == ((fill_value >> 16) & 0xFF) && 
+			    (fill_value & 0xFF) == ((fill_value >> 24) & 0xFF)) {
+				// If all bytes are the same, use memset which is much faster
+				ux_debug("all bytes are the same\n");
+
+				memset(buf, fill_value & 0xFF, num_bytes);
+				n = num_bytes;
+			} else {
+				for (n = 0; n < num_bytes; n += sizeof(fill_value)) {
+					memcpy(buf + n, &fill_value, sizeof(fill_value));
+				}
+			
+				// Handle any remaining bytes (less than sizeof(fill_value))
+				if (n < num_bytes) {
+					ux_debug("writing remaining bytes: \n", num_bytes-n );
+
+					memcpy(buf + n, &fill_value, num_bytes - n);
+				}
+			}
 			ux_debug("FIREHOSE CHUNK_TYPE_FILL: copied: %d bytes\n", n );
+
 			break;
 		default:
 			ux_err("[SPARSE] invalid chunk type\n");

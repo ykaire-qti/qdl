@@ -122,7 +122,6 @@ static struct program *program_load_sparse(struct program *program, int fd)
 			}
 
 			memcpy(program_sparse, program, sizeof(struct program));
-			ux_debug("[SPARSE] Chunk start sector: %s\n", (unsigned int)strtoul(program_sparse->start_sector, NULL, 0));
 			program_sparse->next = NULL;
 			program_sparse->num_sectors = chunk_size / program->sector_size;
 
