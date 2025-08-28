@@ -30,17 +30,17 @@ int sparse_header_parse(int fd, sparse_header_t *sparse_header)
 		return -EINVAL;
 	}
 
-	if (ntohl(sparse_header->magic) != ntohl(SPARSE_HEADER_MAGIC)) {
+	if (sparse_header->magic != SPARSE_HEADER_MAGIC) {
 		ux_err("[SPARSE] Invalid magic in sparse header\n");
 		return -EINVAL;
 	}
 
-	if (ntohs(sparse_header->major_version) != ntohs(SPARSE_HEADER_MAJOR_VER)) {
+	if (sparse_header->major_version != SPARSE_HEADER_MAJOR_VER) {
 		ux_err("[SPARSE] Invalid major version in sparse header\n");
 		return -EINVAL;
 	}
 
-	if (ntohs(sparse_header->minor_version) != ntohs(SPARSE_HEADER_MINOR_VER)) {
+	if (sparse_header->minor_version != SPARSE_HEADER_MINOR_VER) {
 		ux_err("[SPARSE] Invalid minor version in sparse header\n");
 		return -EINVAL;
 	}
@@ -52,10 +52,13 @@ int sparse_header_parse(int fd, sparse_header_t *sparse_header)
 }
 
 int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
-			      unsigned int *chunk_size, unsigned int *value)
+			      uint64_t *chunk_size,
+			      uint32_t *value,
+			      off_t *offset)
 {
 	chunk_header_t chunk_header;
 	uint32_t fill_value = 0;
+	unsigned int type;
 
 	*chunk_size = 0;
 	*value = 0;
@@ -68,35 +71,29 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 	if (sparse_header->chunk_hdr_sz > sizeof(chunk_header_t))
 		lseek(fd, sparse_header->chunk_hdr_sz - sizeof(chunk_header_t), SEEK_CUR);
 
-	if (ntohs(chunk_header.chunk_type) == ntohs(CHUNK_TYPE_RAW)) {
-		*chunk_size = chunk_header.chunk_sz * sparse_header->blk_sz;
+	type = chunk_header.chunk_type;
+	*chunk_size = (uint64_t)chunk_header.chunk_sz * sparse_header->blk_sz;
 
+	switch (type) {
+	case CHUNK_TYPE_RAW:
 		if (chunk_header.total_sz != (sparse_header->chunk_hdr_sz + *chunk_size)) {
 			ux_err("[SPARSE] Bogus chunk size, type Raw\n");
 			return -EINVAL;
 		}
 
 		/* Save the current file offset in the 'value' variable */
-		*value = lseek(fd, 0, SEEK_CUR);
+		*offset = lseek(fd, 0, SEEK_CUR);
 
 		/* Move the file cursor forward by the size of the chunk */
 		lseek(fd, *chunk_size, SEEK_CUR);
-
-		return CHUNK_TYPE_RAW;
-
-	} else if (ntohs(chunk_header.chunk_type) == ntohs(CHUNK_TYPE_DONT_CARE)) {
-		*chunk_size = chunk_header.chunk_sz * sparse_header->blk_sz;
-
+		break;
+	case CHUNK_TYPE_DONT_CARE:
 		if (chunk_header.total_sz != sparse_header->chunk_hdr_sz) {
 			ux_err("[SPARSE] Bogus chunk size, type Don't Care\n");
 			return -EINVAL;
 		}
-
-		return CHUNK_TYPE_DONT_CARE;
-
-	} else if (ntohs(chunk_header.chunk_type) == ntohs(CHUNK_TYPE_FILL)) {
-		*chunk_size = chunk_header.chunk_sz * sparse_header->blk_sz;
-
+		break;
+	case CHUNK_TYPE_FILL:
 		if (chunk_header.total_sz != (sparse_header->chunk_hdr_sz + sizeof(fill_value))) {
 			ux_err("[SPARSE] Bogus chunk size, type Fill\n");
 			return -EINVAL;
@@ -109,10 +106,11 @@ int sparse_chunk_header_parse(int fd, sparse_header_t *sparse_header,
 
 		/* Save the current fill value in the 'value' variable */
 		*value = fill_value;
-
-		return CHUNK_TYPE_FILL;
+		break;
+	default:
+		ux_err("[SPARSE] Unknown chunk type: %#x\n", type);
+		return -EINVAL;
 	}
 
-	ux_err("[SPARSE] Unknown chunk\n");
-	return -EINVAL;
+	return type;
 }

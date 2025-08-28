@@ -6,6 +6,8 @@
 #define _FILE_OFFSET_BITS 64
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -63,7 +65,11 @@ static struct program *program_load_sparse(struct program *program, int fd)
 	char tmp[PATH_MAX];
 
 	sparse_header_t sparse_header;
-	unsigned int start_sector, chunk_size, chunk_type, chunk_data;
+	unsigned int start_sector;
+	uint32_t sparse_fill_value;
+	uint64_t chunk_size;
+	off_t sparse_offset;
+	int chunk_type;
 
 	if (sparse_header_parse(fd, &sparse_header)) {
 		/*
@@ -89,14 +95,10 @@ static struct program *program_load_sparse(struct program *program, int fd)
 
 	for (uint32_t i = 0; i < sparse_header.total_chunks; ++i) {
 		chunk_type = sparse_chunk_header_parse(fd, &sparse_header,
-						       &chunk_size, &chunk_data);
-
-		switch (chunk_type) {
-		case CHUNK_TYPE_RAW:
-		case CHUNK_TYPE_FILL:
-		case CHUNK_TYPE_DONT_CARE:
-			break;
-		default:
+						       &chunk_size,
+						       &sparse_fill_value,
+						       &sparse_offset);
+		if (chunk_type < 0) {
 			ux_err("[PROGRAM] Unable to parse sparse chunk %i at %s...failed\n",
 			       i, program->filename);
 			return NULL;
@@ -106,13 +108,41 @@ static struct program *program_load_sparse(struct program *program, int fd)
 			continue;
 
 		if (chunk_size % program->sector_size != 0) {
-			ux_err("[SPARSE] File chunk #%u size %u is not a sector-multiple\n",
+			ux_err("[SPARSE] File chunk #%u size %" PRIu64 " is not a sector-multiple\n",
+			       i, chunk_size);
+			return NULL;
+		}
+
+		if (chunk_size / program->sector_size >= UINT_MAX) {
+			/*
+			 * Perhaps the programmer can handle larger "num_sectors"?
+			 * Let's cap it for now, it's big enough for now...
+			 */
+			ux_err("[SPARSE] File chunk #%u size %" PRIu64 " is too large\n",
 			       i, chunk_size);
 			return NULL;
 		}
 
 		switch (chunk_type) {
 		case CHUNK_TYPE_RAW:
+			program_sparse = calloc(1, sizeof(struct program));
+			memcpy(program_sparse, program, sizeof(struct program));
+
+			program_sparse->next = NULL;
+			program_sparse->num_sectors = chunk_size / program->sector_size;
+
+			program_sparse->sparse_chunk_type = CHUNK_TYPE_RAW;
+			program_sparse->sparse_offset = sparse_offset;
+
+			if (programes_sparse) {
+				programes_sparse_last->next = program_sparse;
+				programes_sparse_last = program_sparse;
+			} else {
+				programes_sparse = program_sparse;
+				programes_sparse_last = program_sparse;
+			}
+
+			break;
 		case CHUNK_TYPE_FILL:
 
 			program_sparse = calloc(1, sizeof(struct program));
@@ -121,8 +151,8 @@ static struct program *program_load_sparse(struct program *program, int fd)
 			program_sparse->next = NULL;
 			program_sparse->num_sectors = chunk_size / program->sector_size;
 
-			program_sparse->sparse_chunk_type = chunk_type;
-			program_sparse->sparse_chunk_data = chunk_data;
+			program_sparse->sparse_chunk_type = CHUNK_TYPE_FILL;
+			program_sparse->sparse_fill_value = sparse_fill_value;
 
 			if (programes_sparse) {
 				programes_sparse_last->next = program_sparse;
